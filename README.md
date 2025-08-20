@@ -18,6 +18,47 @@
 <p align="center">
 <img src="assets/show_images.jpg" width=95%>
 <p>
+## extract错误
+```
+============================================================
+多尺度Token提取和可视化工具
+============================================================
+正在初始化TokenExtractor...
+设备: cuda
+正在加载VAE模型: weights/infinity_vae_d56_f8_14_patchify.pth
+VAE模型加载完成，codebook_dim=14
+TokenExtractor初始化完成！
+
+开始提取多尺度token...
+输入图像: 000_turn_left_LeftView.png
+宽高比: 1.0, 像素级别: 0.25M
+使用的宽高比模板: 1.0
+目标尺寸: 512 x 512
+尺度调度表: [(1, 1, 1), (2, 2, 2), (3, 4, 4), (4, 6, 6), (5, 8, 8), (6, 12, 12), (7, 16, 16), (9, 20, 20), (11, 24, 24), (13, 32, 32)]
+正在预处理图像: 000_turn_left_LeftView.png
+原始图像尺寸: 640 x 480
+缩放后尺寸: 682 x 512
+最终预处理后图像尺寸: 512 x 512
+tensor形状: torch.Size([3, 512, 512]), 数值范围: [-1.000, 1.000]
+
+第一步：VAE编码获取原始特征...
+原始特征形状: torch.Size([1, 14, 64, 64])
+
+第二步：位级自我纠正获取多尺度token...
+Traceback (most recent call last):
+  File "/mnt/nas-data-1/chenhao/Infinity/extract_multiscale_tokens.py", line 665, in <module>
+    main()
+  File "/mnt/nas-data-1/chenhao/Infinity/extract_multiscale_tokens.py", line 631, in main
+    extraction_result = extractor.extract_multiscale_tokens(
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/nas-data-1/chenhao/Infinity/extract_multiscale_tokens.py", line 264, in extract_multiscale_tokens
+    x_BLC_wo_prefix, gt_ms_idx_Bl = self.bitwise_self_correction.flip_requant(
+                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/nas-data-1/chenhao/Infinity/infinity/models/bitwise_self_correction.py", line 71, in flip_requant
+    item = item.squeeze(1).permute(0,3,1,2) # (B,d,H,W)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: permute(sparse_coo): number of dimensions in the tensor input does not match the length of the desired ordering of dimensions i.e. input.dim() = 5 is not equal to len(dims) = 4
+```
 
 ## 🔥 Updates!!
 * Jun 24, 2025: 🍉 Release a middle stage model of Infinity-8B generating 512x512 images.
