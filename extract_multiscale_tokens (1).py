@@ -333,8 +333,48 @@ class MultiscaleTokenExtractor:
         
         print(f"统计信息已保存到: {stats_file}")
         
+    def add_token_info_to_image(self, img, scale_idx, token_count, token_type):
+        """在图片上添加token信息标注"""
+        img_with_text = img.copy()
+        
+        # 准备文本信息
+        text_lines = [
+            f"Scale {scale_idx}",
+            f"{token_count} tokens",
+            f"({token_type})"
+        ]
+        
+        # 设置文本参数
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 0.8
+        color = (255, 255, 255)  # 白色文字
+        thickness = 2
+        bg_color = (0, 0, 0)  # 黑色背景
+        
+        # 计算文本大小用于背景
+        text_sizes = []
+        for text in text_lines:
+            (text_width, text_height), baseline = cv2.getTextSize(text, font, font_scale, thickness)
+            text_sizes.append((text_width, text_height + baseline))
+        
+        max_width = max([size[0] for size in text_sizes])
+        total_height = sum([size[1] for size in text_sizes]) + 10  # 额外间距
+        
+        # 绘制半透明背景
+        overlay = img_with_text.copy()
+        cv2.rectangle(overlay, (10, 10), (10 + max_width + 20, 10 + total_height), bg_color, -1)
+        cv2.addWeighted(overlay, 0.7, img_with_text, 0.3, 0, img_with_text)
+        
+        # 绘制文本
+        y_offset = 35
+        for i, text in enumerate(text_lines):
+            cv2.putText(img_with_text, text, (20, y_offset), font, font_scale, color, thickness)
+            y_offset += text_sizes[i][1] + 5
+        
+        return img_with_text
+
     def save_visualizations(self, gt_reconstructed, corrected_reconstructed, 
-                          original_image, output_dir, image_name):
+                          original_image, output_dir, image_name, gt_tokens, corrected_tokens):
         """保存可视化结果"""
         print(f"\n正在保存可视化结果...")
         
@@ -342,26 +382,33 @@ class MultiscaleTokenExtractor:
         original_path = os.path.join(output_dir, f"{image_name}_original.jpg")
         original_image.save(original_path)
         
-        # 保存各个尺度的重构图片
+        # 保存各个尺度的重构图片（带token信息标注）
         for i, (gt_img, corrected_img) in enumerate(zip(gt_reconstructed, corrected_reconstructed)):
-            # 真实token重构的图片
+            # 计算当前尺度的token数量
+            token_shape = gt_tokens[i].shape  # (B, T, H, W, D)
+            token_count = token_shape[1] * token_shape[2] * token_shape[3]  # T * H * W
+            
+            # 为图片添加token信息标注
+            gt_img_annotated = self.add_token_info_to_image(gt_img, i, token_count, "Original")
+            corrected_img_annotated = self.add_token_info_to_image(corrected_img, i, token_count, "Corrected")
+            
+            # 保存标注后的图片
             gt_path = os.path.join(output_dir, f"{image_name}_scale{i}_gt_reconstructed.jpg")
-            cv2.imwrite(gt_path, gt_img[:, :, ::-1])  # RGB -> BGR
+            cv2.imwrite(gt_path, gt_img_annotated[:, :, ::-1])  # RGB -> BGR
             
-            # 纠正后token重构的图片
             corrected_path = os.path.join(output_dir, f"{image_name}_scale{i}_corrected_reconstructed.jpg")
-            cv2.imwrite(corrected_path, corrected_img[:, :, ::-1])  # RGB -> BGR
+            cv2.imwrite(corrected_path, corrected_img_annotated[:, :, ::-1])  # RGB -> BGR
             
-            print(f"Scale {i} 可视化已保存")
+            print(f"Scale {i} 可视化已保存 ({token_count} tokens)")
         
         # 创建对比图
         self.create_comparison_visualization(
             gt_reconstructed, corrected_reconstructed, 
-            output_dir, image_name
+            output_dir, image_name, gt_tokens
         )
     
     def create_comparison_visualization(self, gt_reconstructed, corrected_reconstructed, 
-                                     output_dir, image_name):
+                                     output_dir, image_name, gt_tokens):
         """创建对比可视化图"""
         print("正在创建对比可视化...")
         
@@ -371,19 +418,163 @@ class MultiscaleTokenExtractor:
         comparison = np.zeros((fig_height, fig_width, 3), dtype=np.uint8)
         
         for i in range(4):
+            # 计算token数量
+            token_shape = gt_tokens[i].shape
+            token_count = token_shape[1] * token_shape[2] * token_shape[3]
+            
+            # 为重构图片添加标注
+            gt_img_annotated = self.add_token_info_to_image(gt_reconstructed[i], i, token_count, "Original")
+            corrected_img_annotated = self.add_token_info_to_image(corrected_reconstructed[i], i, token_count, "Corrected")
+            
             # 第一行：真实token重构
             y1, y2 = 0, 512
             x1, x2 = i * 512, (i + 1) * 512
-            comparison[y1:y2, x1:x2] = gt_reconstructed[i]
+            comparison[y1:y2, x1:x2] = gt_img_annotated
             
             # 第二行：纠正后token重构
             y1, y2 = 512, 1024
-            comparison[y1:y2, x1:x2] = corrected_reconstructed[i]
+            comparison[y1:y2, x1:x2] = corrected_img_annotated
         
-        # 添加标签（简单的方式）
+        # 保存对比图
         comparison_path = os.path.join(output_dir, f"{image_name}_comparison.jpg")
         cv2.imwrite(comparison_path, comparison[:, :, ::-1])  # RGB -> BGR
         print(f"对比图已保存到: {comparison_path}")
+        
+    def save_tokens_as_txt(self, gt_tokens, corrected_tokens, output_dir, image_name):
+        """将token以人类可读的格式保存到txt文件"""
+        print(f"\n正在保存token数据到txt文件...")
+        
+        # 保存真实token
+        gt_txt_path = os.path.join(output_dir, f"{image_name}_gt_tokens.txt")
+        with open(gt_txt_path, 'w') as f:
+            f.write("=" * 80 + "\n")
+            f.write("Infinity模型 - 真实Token数据 (Original Tokens)\n")
+            f.write("=" * 80 + "\n\n")
+            f.write(f"图片: {image_name}\n")
+            f.write(f"提取时间: {datetime.now()}\n")
+            f.write(f"模型: Infinity-8B (512x512)\n")
+            f.write(f"VAE类型: {self.args.vae_type}\n")
+            f.write(f"编码本维度: {self.vae.codebook_dim}\n\n")
+            
+            for i, tokens in enumerate(gt_tokens):
+                scale_info = self.vae_scale_schedule[i]
+                token_shape = tokens.shape  # (B, T, H, W, D)
+                token_count = token_shape[1] * token_shape[2] * token_shape[3]
+                
+                f.write("-" * 60 + "\n")
+                f.write(f"Scale {i}: 分辨率 {scale_info}\n")
+                f.write("-" * 60 + "\n")
+                f.write(f"Token形状: {token_shape}\n")
+                f.write(f"Token数量: {token_count}\n")
+                f.write(f"每个token的bit数: {token_shape[-1]}\n")
+                f.write(f"总bit数: {token_count * token_shape[-1]}\n\n")
+                
+                # 将token数据展平并保存
+                tokens_flat = tokens.squeeze(0).reshape(-1, token_shape[-1])  # (token_count, bit_dim)
+                
+                f.write("Token数据 (每行一个token，每个数字代表一个bit):\n")
+                for token_idx, token in enumerate(tokens_flat):
+                    bit_string = ''.join([str(int(bit.item())) for bit in token])
+                    f.write(f"Token_{token_idx:04d}: {bit_string}\n")
+                    
+                    # 为了文件不过大，每个尺度最多保存前100个token的详细信息
+                    if token_idx >= 99:
+                        remaining = len(tokens_flat) - 100
+                        if remaining > 0:
+                            f.write(f"... (还有{remaining}个token，格式相同)\n")
+                        break
+                
+                f.write("\n")
+        
+        # 保存纠正后token
+        corrected_txt_path = os.path.join(output_dir, f"{image_name}_corrected_tokens.txt")
+        with open(corrected_txt_path, 'w') as f:
+            f.write("=" * 80 + "\n")
+            f.write("Infinity模型 - 纠正后Token数据 (Self-Corrected Tokens)\n")
+            f.write("=" * 80 + "\n\n")
+            f.write(f"图片: {image_name}\n")
+            f.write(f"提取时间: {datetime.now()}\n")
+            f.write(f"模型: Infinity-8B (512x512)\n")
+            f.write(f"噪声应用层数: {self.noise_apply_layers}\n")
+            f.write(f"噪声强度: {self.noise_apply_strength}\n\n")
+            
+            for i, (gt_tokens_scale, corrected_tokens_scale) in enumerate(zip(gt_tokens, corrected_tokens)):
+                scale_info = self.vae_scale_schedule[i]
+                token_shape = corrected_tokens_scale.shape
+                token_count = token_shape[1] * token_shape[2] * token_shape[3]
+                
+                f.write("-" * 60 + "\n")
+                f.write(f"Scale {i}: 分辨率 {scale_info}\n")
+                f.write("-" * 60 + "\n")
+                f.write(f"Token形状: {token_shape}\n")
+                f.write(f"Token数量: {token_count}\n")
+                f.write(f"每个token的bit数: {token_shape[-1]}\n")
+                
+                # 计算与原始token的差异
+                gt_flat = gt_tokens_scale.squeeze(0).reshape(-1, token_shape[-1])
+                corrected_flat = corrected_tokens_scale.squeeze(0).reshape(-1, token_shape[-1])
+                diff_mask = (gt_flat != corrected_flat)
+                total_bits = gt_flat.numel()
+                flipped_bits = diff_mask.sum().item()
+                
+                f.write(f"总bit数: {total_bits}\n")
+                f.write(f"翻转的bit数: {flipped_bits}\n")
+                f.write(f"翻转比例: {flipped_bits/total_bits*100:.2f}%\n\n")
+                
+                f.write("纠正后Token数据 (每行一个token，*标记表示与原始token不同的bit):\n")
+                for token_idx, (gt_token, corrected_token) in enumerate(zip(gt_flat, corrected_flat)):
+                    # 创建bit字符串，标记差异
+                    bit_string = ""
+                    for bit_idx, (gt_bit, corr_bit) in enumerate(zip(gt_token, corrected_token)):
+                        if gt_bit != corr_bit:
+                            bit_string += f"{int(corr_bit.item())}*"  # 标记翻转的bit
+                        else:
+                            bit_string += str(int(corr_bit.item()))
+                    
+                    f.write(f"Token_{token_idx:04d}: {bit_string}\n")
+                    
+                    # 限制输出数量
+                    if token_idx >= 99:
+                        remaining = len(corrected_flat) - 100
+                        if remaining > 0:
+                            f.write(f"... (还有{remaining}个token，格式相同)\n")
+                        break
+                
+                f.write("\n")
+        
+        print(f"真实token数据已保存到: {gt_txt_path}")
+        print(f"纠正后token数据已保存到: {corrected_txt_path}")
+        
+        # 创建汇总统计文件
+        summary_path = os.path.join(output_dir, f"{image_name}_token_summary.txt")
+        with open(summary_path, 'w') as f:
+            f.write("Token数量汇总 - Multi-scale Token Summary\n")
+            f.write("=" * 50 + "\n\n")
+            
+            total_tokens = 0
+            total_bits = 0
+            
+            for i, tokens in enumerate(gt_tokens):
+                scale_info = self.vae_scale_schedule[i]
+                token_shape = tokens.shape
+                token_count = token_shape[1] * token_shape[2] * token_shape[3]
+                bit_count = token_count * token_shape[-1]
+                
+                total_tokens += token_count
+                total_bits += bit_count
+                
+                f.write(f"Scale {i}: {scale_info}\n")
+                f.write(f"  Token数量: {token_count:,}\n")
+                f.write(f"  每个token bit数: {token_shape[-1]}\n")
+                f.write(f"  该尺度总bit数: {bit_count:,}\n\n")
+            
+            f.write("-" * 30 + "\n")
+            f.write(f"总计:\n")
+            f.write(f"  所有尺度token总数: {total_tokens:,}\n")
+            f.write(f"  所有尺度bit总数: {total_bits:,}\n")
+            f.write(f"  平均每个token bit数: {total_bits/total_tokens:.1f}\n")
+        
+        print(f"Token汇总已保存到: {summary_path}")
         
     def extract_from_image(self, image_path):
         """
@@ -413,9 +604,10 @@ class MultiscaleTokenExtractor:
         
         # 5. 保存结果
         self.save_tokens(gt_tokens, corrected_tokens, output_dir, image_name)
+        self.save_tokens_as_txt(gt_tokens, corrected_tokens, output_dir, image_name)
         self.save_visualizations(
             gt_reconstructed, corrected_reconstructed, 
-            original_image, output_dir, image_name
+            original_image, output_dir, image_name, gt_tokens, corrected_tokens
         )
         
         print(f"\n✅ 处理完成！结果已保存到: {output_dir}")
